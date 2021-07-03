@@ -13,8 +13,8 @@ class IntDictionary:
     def decrement_int(self, key, int_value: int):
         pass
 
-    def get_int(self, key, default=0):
-        return 0
+    def get_int(self, key, default: int = 0):
+        return default
 
 
 class Bot:
@@ -28,7 +28,7 @@ class Bot:
         print("Running bot loop")
 
     @staticmethod
-    def register_command(command_name, cooldown=0):
+    def register_command(command_name, cooldown: int = 0):
         print(f"Registered command: {command_name} that cools down in {cooldown}")
 
         def decorator(function):
