@@ -7,7 +7,7 @@ from random import randint
 from discord import Bot, Message, User
 
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(name)s %(levelname)s %(message)s')
 
 ONE_HOUR = 60 * 60
 BULLETS_COUNT = 6

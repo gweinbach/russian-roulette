@@ -4,14 +4,17 @@ import logging
 import sys
 from datetime import datetime
 from enum import Enum, IntEnum
+from random import random
 
 import gevent
-import pytz as pytz
 import requests
 from gevent.queue import Queue
+from pytz import utc
 from ws4py.client.geventclient import WebSocketClient
 
 from .user import User
+
+logger = logging.getLogger(__name__)
 
 DISCORD_API_CLIENT_VERSION = "0.1"
 DISCORD_API_CLIENT_URL = "https://github.com/gweinbach/russian-roulette"
@@ -29,23 +32,43 @@ DISCORD_AUTHORIZATION_HEADER = "Bot {token}"
 DISCORD_USER_AGENT_HEADER = f"DiscordBot ({DISCORD_API_CLIENT_URL}, {DISCORD_API_CLIENT_VERSION})"
 
 
+class DiscordClientApi:
+    def matching_callback(self, message_content: str):
+        return None
+
+    def heartbeat_on(self):
+        pass
+
+
+# Exceptions
 class DiscordError(Exception):
     pass
 
 
-class DiscordConnectionError(DiscordError):
+class DiscordGatewayConnectionError(DiscordError):
     def __init__(self, message):
         self.message = message
         super().__init__(self.message)
 
 
-class DiscordInvalidOperation(DiscordError):
+class DiscordEmptyGatewayOperation(DiscordError):
+    pass
+
+
+class DiscordUnknownGatewayOperation(DiscordError):
+    def __init__(self, op):
+        self.op = op
+        super().__init__(f"Invalid operation. Operation Code {op} is not implemented")
+
+
+class DiscordInvalidGatewayOperation(DiscordError):
     def __init__(self, op, expected_op):
         self.op = op
         self.expected_op = expected_op
         super().__init__(f"Invalid operation. Expected {expected_op} but actual Operation Code is {op}")
 
 
+# Enums
 class DiscordMessageType(IntEnum):
     DEFAULT = 0
     RECIPIENT_ADD = 1
@@ -94,6 +117,25 @@ class DiscordGatewayEventName(Enum):
     MessageCreate = "MESSAGE_CREATE"
 
 
+class DiscordGatewayIntent(IntEnum):
+    Guilds = 1 << 0
+    GuildMembers = 1 << 1
+    GuildBans = 1 << 2
+    GuildEmokis = 1 << 3
+    GuildIntegrations = 1 << 4
+    GuildWebhooks = 1 << 5
+    GuildInvites = 1 << 6
+    GuildVoiceStates = 1 << 7
+    GuildPresences = 1 << 8
+    GuildMessages = 1 << 9
+    GuildMessageReactions = 1 << 10
+    GuildMessageTyping = 1 << 11
+    DirectMessages = 1 << 12
+    DirectMessageReactions = 1 << 13
+    DirectMessageTyping = 1 << 14
+
+
+# Gateway Operations Hierarchy
 class DiscordGatewayOp:
 
     def __init__(self,
@@ -111,9 +153,9 @@ class DiscordGatewayOp:
 
     def sequence_number(self):
         if isinstance(self.operation, dict):
-            return self.operation.get("s", 0)
+            return self.operation.get("s", None)
         else:
-            return 0
+            return None
 
     def event_name(self):
         if isinstance(self.operation, dict):
@@ -132,17 +174,37 @@ class DiscordGatewayOp:
 
     def check_type(self):
         if not self.has_type():
-            raise DiscordInvalidOperation(self.operation, self.op_code)
+            raise DiscordInvalidGatewayOperation(self.operation, self.op_code)
         else:
             pass
 
+    def handle_event(self,
+                     discord_client: DiscordClientApi):
+        logger.info(f"Nothing has to be done to handle event on Gateway operation {self.__class__.__name__}")
+
     @classmethod
-    def received(cls,
-                 message: str):
+    def expect(cls,
+               message: str):
         if not message:
-            raise DiscordInvalidOperation()
+            raise DiscordEmptyGatewayOperation()
         payload = json.loads(message)
+        DiscordGatewayOp._last_message_seq = payload.get("s", None)
+
         return cls(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)), payload)
+
+    @staticmethod
+    def receive(message: str):
+        if not message:
+            raise DiscordEmptyGatewayOperation()
+        payload = json.loads(message)
+        DiscordGatewayOp.set_last_message_seq(payload.get("s", None))
+
+        op_code = payload.get("op", DiscordGatewayOpCode.NO_OP.value)
+        op_class = DISCORD_OP_TO_CLASS.get(op_code)
+        if op_class is None:
+            raise DiscordUnknownGatewayOperation(op_code)
+
+        return op_class(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)), payload)
 
     @classmethod
     def create(cls,
@@ -152,6 +214,18 @@ class DiscordGatewayOp:
             op_code,
             dict(copy.deepcopy(content), op=op_code.value)
         )
+
+    @staticmethod
+    def last_message_seq():
+        last_message_seq = None
+        if hasattr(DiscordGatewayOp, '_last_message_seq'):
+            last_message_seq = DiscordGatewayOp._last_message_seq
+        return last_message_seq
+
+    @staticmethod
+    def set_last_message_seq(seq: int):
+        if seq is not None:
+            DiscordGatewayOp._last_message_seq = seq
 
     def json(self):
         return json.dumps(self.operation)
@@ -175,12 +249,43 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
             }
         )
 
+    def handle_event(self,
+                     discord_client: DiscordClientApi):
+        event_data = self.event_data()
+        message_content = event_data.get("content", "")
+        callback = discord_client.matching_callback(message_content)
+
+        if callback:
+            logger.info(f"found callback matching message content ({message_content}): {callback}")
+
+            message_id = event_data.get("id", "")
+            user = event_data.get("author", {})
+            user_id = user.get("id", "")
+            user_name = user.get("username", "")
+
+            message = Message(message_id, User(user_id, user_name), message_content, self, discord_client)
+            gevent.spawn(callback.callback_function, callback.caller, message)
+
+
+class DiscordGatewayHeartbeatAck(DiscordGatewayOp):
+
+    @classmethod
+    def create(cls,
+               event: dict):
+        return super().create(
+            DiscordGatewayOpCode.HEARTBEAT_ACK,
+            {}
+        )
+
+    def handle_event(self, discord_client: DiscordClientApi):
+        discord_client.heartbeat_on()
+
 
 class DiscordGatewayCommand(DiscordGatewayOp):
 
     def check_type(self):
         if self.event_name() != DiscordGatewayEventName.Unknown or self.sequence_number():
-            raise DiscordInvalidOperation(self.operation, self.op_code)
+            raise DiscordInvalidGatewayOperation(self.operation, self.op_code)
         super().check_type()
 
 
@@ -205,6 +310,29 @@ class DiscordGatewayHello(DiscordGatewayCommand):
         )
 
 
+class DiscordGatewayHeartbeat(DiscordGatewayCommand):
+
+    def last_message_seq_data(self):
+        if isinstance(self.operation, dict):
+            return self.operation.get("d", None)
+        else:
+            return None
+
+    @classmethod
+    def create(cls,
+               token: str):
+        return super().create(
+            DiscordGatewayOpCode.HEARTBEAT,
+            {
+                "d": DiscordGatewayOp.last_message_seq()
+            }
+        )
+
+    def handle_event(self,
+                     discord_client: DiscordClientApi):
+        super().handle_event(discord_client)
+
+
 class DiscordGatewayIdentify(DiscordGatewayCommand):
 
     @classmethod
@@ -227,22 +355,22 @@ class DiscordGatewayIdentify(DiscordGatewayCommand):
         )
 
 
-class DiscordGatewayIntent(IntEnum):
-    Guilds = 1 << 0
-    GuildMembers = 1 << 1
-    GuildBans = 1 << 2
-    GuildEmokis = 1 << 3
-    GuildIntegrations = 1 << 4
-    GuildWebhooks = 1 << 5
-    GuildInvites = 1 << 6
-    GuildVoiceStates = 1 << 7
-    GuildPresences = 1 << 8
-    GuildMessages = 1 << 9
-    GuildMessageReactions = 1 << 10
-    GuildMessageTyping = 1 << 11
-    DirectMessages = 1 << 12
-    DirectMessageReactions = 1 << 13
-    DirectMessageTyping = 1 << 14
+DISCORD_OP_TO_CLASS = {
+    DiscordGatewayOpCode.NO_OP: None,
+    DiscordGatewayOpCode.DISPATCH: DiscordGatewayDispatch,
+    DiscordGatewayOpCode.HEARTBEAT: DiscordGatewayHeartbeat,
+    DiscordGatewayOpCode.IDENTIFY: DiscordGatewayIdentify,
+    DiscordGatewayOpCode.PRESENCE: None,
+    DiscordGatewayOpCode.VOICE_STATE: None,
+    DiscordGatewayOpCode.VOICE_PING: None,
+    DiscordGatewayOpCode.RESUME: None,
+    DiscordGatewayOpCode.RECONNECT: None,
+    DiscordGatewayOpCode.REQUEST_MEMBERS: None,
+    DiscordGatewayOpCode.INVALIDATE_SESSION: None,
+    DiscordGatewayOpCode.HELLO: DiscordGatewayHello,
+    DiscordGatewayOpCode.HEARTBEAT_ACK: DiscordGatewayHeartbeatAck,
+    DiscordGatewayOpCode.GUILD_SYNC: None,
+}
 
 
 class DiscordCallback():
@@ -255,7 +383,7 @@ class DiscordCallback():
         self.cooldown = cooldown
 
 
-class DiscordClient(object):
+class DiscordClient(DiscordClientApi):
 
     def __init__(self,
                  token: str,
@@ -265,14 +393,18 @@ class DiscordClient(object):
         self.api_version = api_version
         self.gateway_api_version = gateway_api_version
 
-        self.message_handler_registry = {}
+        self.callback_registry = {}
         self.connected_to_gateway_event = gevent.event.Event()
+        self.heartbeat_event = gevent.event.Event()
         self.event_queue = Queue()
         self.websocket = None
 
     def register_callback(self, message_content: str, caller: object, callback_function, cooldown: int = 0):
-        logging.info(f"registered {caller}.{callback_function} to handle {message_content}")
-        self.message_handler_registry[message_content] = DiscordCallback(caller, callback_function, cooldown)
+        logger.info(f"registered {caller}.{callback_function} to handle {message_content}")
+        self.callback_registry[message_content] = DiscordCallback(caller, callback_function, cooldown)
+
+    def matching_callback(self, message_content: str):
+        return self.callback_registry.get(message_content, None)
 
     def bot_authorization_header(self):
         return DISCORD_AUTHORIZATION_HEADER.format(token=self.token)
@@ -312,84 +444,76 @@ class DiscordClient(object):
         uri = self.gateway_base_url()
         self.websocket = Ws4pyClient(uri)
 
-        hello = DiscordGatewayHello.received(self.websocket.receive())
+        hello = DiscordGatewayHello.expect(self.websocket.receive())
+
+        # starting heartbeat loop
         heartbeat_interval = hello.heartbeat_interval()
-        heartbeat = gevent.spawn(self.heartbeat, heartbeat_interval)
+        heartbeat = gevent.spawn(self.heartbeat, interval=heartbeat_interval)
+        self.heartbeat_on()
 
         self.websocket.send(DiscordGatewayIdentify.create(self.token,
                                                           DiscordGatewayIntent.GuildMessages | DiscordGatewayIntent.GuildMessageReactions | DiscordGatewayIntent.DirectMessages | DiscordGatewayIntent.DirectMessageReactions))
 
-        ready = DiscordGatewayDispatch.received(self.websocket.receive())
+        ready = DiscordGatewayDispatch.expect(self.websocket.receive())
 
         # Signals that connection is OK
         self.connected_to_gateway_event.set()
 
         heartbeat.join()
 
-    # TODO implement heartbeat
-    def heartbeat(self, interval: int):
-        pass
+    def heartbeat_on(self):
+        self.heartbeat_event.set()
+
+    def heartbeat_off(self):
+        self.heartbeat_event.clear()
+
+    def heartbeat(self,
+                  interval: int):
+        self.heartbeat_event.wait()
+        gevent.sleep((interval * random()) / 1000)
+        logger.info("heartbeat!")
+        heartbeat = DiscordGatewayHeartbeat.create(self.token)
+        self.websocket.send(heartbeat)
+        self.heartbeat_off()
+        self.heartbeat(interval)
 
     def queue_events(self):
         self.connected_to_gateway_event.wait()
-        logging.info("queuing events...")
+        logger.info("queuing events...")
         while True:
-            event = DiscordGatewayDispatch.received(self.websocket.receive())
+            event = DiscordGatewayOp.receive(self.websocket.receive())
             self.event_queue.put(event)
             gevent.sleep(0)
 
     def handle_events(self):
         self.connected_to_gateway_event.wait()
-        logging.info("...unqueuing events")
+        logger.info("...unqueuing events")
         while True:
             event = self.event_queue.get()
-            self.handle_event(event)
+            gevent.spawn(event.handle_event, self)
             gevent.sleep(0)
 
-    def handle_event(self, event: dict):
-        logging.info(f"handling event: {event}")
-
-        event_data = event.event_data()
-        message_content = event_data.get("content", "")
-        callback = self.message_handler_registry.get(message_content, None)
-
-        logging.info(f"found callback: {callback}")
-
-        if (callback):
-            message_id = event_data.get("id", "")
-            user = event_data.get("author", {})
-            user_id = user.get("id", "")
-            user_name = user.get("username", "")
-
-            message = Message(message_id, User(user_id, user_name), message_content, event, self)
-            gevent.spawn(callback.callback_function, callback.caller, message)
-
-    def start(self):
-        return [
-            gevent.spawn(self.connect_to_gateway),
-            gevent.spawn(self.queue_events),
-            gevent.spawn(self.handle_events)
-        ]
-
-    def respond_with(self, response: str, request: DiscordGatewayDispatch):
+    def respond_with(self,
+                     response: str,
+                     request: DiscordGatewayOp):
 
         def respond(message: dict):
             channel_id = message.get("channel_id", "0")
             user = self.me()
             message["author"] = user
 
-            logging.debug(f"respond message=${message}")
+            logger.debug(f"respond message=${message}")
             result = requests.post(
                 url=self.api_url(ressource_path=DISCORD_CREATE_MESSAGE_PATH.format(channel_id=channel_id)),
                 headers=self.header(),
                 json=message
             )
-            logging.debug(f"respond result={result}, reason={result.reason}, content={result.text}")
+            logger.debug(f"respond result={result}, reason={result.reason}, content={result.text}")
 
         request_message = request.event_data()
         response_message = copy.deepcopy(request_message)
         response_message["id"] = None
-        response_message["timestamp"] = datetime.now().astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00)")
+        response_message["timestamp"] = self.timestamp()
         response_message["content"] = response
         response_message["referenced_message"] = request_message
         response_message["message_reference"] = {
@@ -399,24 +523,35 @@ class DiscordClient(object):
 
         gevent.spawn(respond, response_message)
 
+    def start(self):
+        return [
+            gevent.spawn(self.connect_to_gateway),
+            gevent.spawn(self.queue_events),
+            gevent.spawn(self.handle_events)
+        ]
+
+    @staticmethod
+    def timestamp():
+        return datetime.now().astimezone(utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00)")
+
+
 class Message:
 
     def __init__(self,
                  id: str,
                  author: User,
                  content: str,
-                 original_event: dict,
+                 original_event: DiscordGatewayOp,
                  discord_client: DiscordClient):
         self.id = id
         self.author = author
         self.content = content
         self.original_event = original_event
         self.discord_client = discord_client
-        logging.info(self)
+        logger.info(self)
 
-    # TODO implement message response
     def respond(self, response: str):
-        logging.info(f"responding {response}")
+        logger.info(f"responding {response}")
         print(type(self.original_event))
         self.discord_client.respond_with(response, request=self.original_event)
 
@@ -428,12 +563,12 @@ class Ws4pyClient:
         self.ws.connect()
 
     def send(self, command: DiscordGatewayCommand):
-        logging.info(f"> sending command {command}")
+        logger.info(f"> sending command {command}")
         self.ws.send(str(command))
 
     def receive(self):
         received = str(self.ws.receive())
-        logging.info(f"< received message {received}")
+        logger.info(f"< received message {received}")
         return received
 
 #

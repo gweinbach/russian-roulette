@@ -4,3 +4,4 @@ zope.event==4.5.0
 zope.interface==5.4.0
 requests==2.25.1
 ws4py==0.5.1
+pytz==2021.1
