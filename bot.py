@@ -21,7 +21,7 @@ class RouletteBot(Bot):
     def handle_roulette_command(self, message: Message):
         message.respond(f"😣🔫 {message.author.mention()} places the muzzle against their head...")
         sleep(3)
-        if randint(BULLETS_COUNT) == 0:
+        if randint(0, BULLETS_COUNT) == 0:
             self.kv.decrement_int(self.__player_score_key(message.author), DEATH_POINTS_PENALTY)
             message.respond(f"☠ {message.author.mention()} dies and loses {DEATH_POINTS_PENALTY}!")
         else:

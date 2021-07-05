@@ -274,7 +274,7 @@ class DiscordClient(object):
 
         hello = DiscordGatewayHello.received(self.websocket.receive())
         heartbeat_interval = hello.heartbeat_interval()
-        heartbeat = gevent.spawn(self.heartbeat(heartbeat_interval))
+        heartbeat = gevent.spawn(self.heartbeat, heartbeat_interval)
 
         self.websocket.send(DiscordGatewayIdentify.create(self.token,
                                                           DiscordGatewayIntent.GuildMessages | DiscordGatewayIntent.GuildMessageReactions | DiscordGatewayIntent.DirectMessages | DiscordGatewayIntent.DirectMessageReactions))
@@ -314,15 +314,15 @@ class DiscordClient(object):
             user_id = user.get("id", "")
             user_name = user.get("username", "")
 
-            message = Message(message_id, User(user_id, user_name), message_content, self)
-            callback.callback_function(callback.caller, message)
+            message = Message(message_id, User(user_id, user_name), message_content, event, self)
+            gevent.spawn(callback.callback_function, callback.caller, message)
 
 
 
     def start(self):
         return [
-            gevent.spawn(self.connect_to_gateway()),
-            gevent.spawn(self.event_loop())
+            gevent.spawn(self.connect_to_gateway),
+            gevent.spawn(self.event_loop)
         ]
 
 class Message:
@@ -331,16 +331,19 @@ class Message:
                  id: str,
                  author: User,
                  content: str,
+                 original_event: dict,
                  discord_client: DiscordClient):
         self.id = id
         self.author = author
         self.content = content
+        self.original_event = original_event
         self.discord_client = discord_client
         logging.info(self)
 
     # TODO implement message response
     def respond(self, response: str):
         logging.info(f"responding {response}")
+        #gevent.spawn(self.discord_client.)
         # self.discord_client.websocket.send()
 
 
