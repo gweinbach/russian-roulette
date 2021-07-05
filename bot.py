@@ -1,3 +1,7 @@
+from gevent import monkey
+monkey.patch_all()
+
+import logging
 from gevent import sleep
 from random import randint
 from discord import Bot, Message, User
@@ -32,6 +36,9 @@ class RouletteBot(Bot):
 
 
 if __name__ == "__main__":
+
+    logging.basicConfig(level=logging.INFO)
+
     # Should be read from environment or better, a Vault
     BOT_TOKEN = "ODYwMTk2NDMzMzY1NTY1NTAw.YN3uWw.DcaWW6jKiffaIVpi9uS3rZZ7QCM"
     bot = RouletteBot(BOT_TOKEN)

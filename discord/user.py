@@ -1,9 +1,11 @@
 
 class User:
 
-    def __init__(self, id: int):
+    def __init__(self,
+                 id: str,
+                 name: str):
         self.id = id
+        self.name = name
 
-    @classmethod
     def mention(self):
-        return str(self.id)
+        return str(self.name)
