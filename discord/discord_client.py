@@ -5,6 +5,7 @@ from enum import Enum, IntEnum
 
 import gevent
 import requests
+from gevent.queue import Queue
 from ws4py.client.geventclient import WebSocketClient
 
 from .user import User
@@ -17,7 +18,8 @@ DISCORD_API_VERSION = "9"
 DISCORD_GATEWAY_API_VERSION = "9"
 
 DISCORD_API_BASE_URL = "https://discord.com/api"
-DISCORD_GATEWAY_PATH = "gateway/bot"
+DISCORD_GATEWAY_PATH = "/gateway/bot"
+DISCORD_CURRENT_USER_PATH = "/users/@me"
 
 DISCORD_AUTHORIZATION_HEADER = "Bot {token}"
 DISCORD_USER_AGENT_HEADER = f"DiscordBot ({DISCORD_API_CLIENT_URL}, {DISCORD_API_CLIENT_VERSION})"
@@ -236,6 +238,7 @@ class DiscordClient(object):
 
         self.message_handler_registry = {}
         self.connected_to_gateway_event = gevent.event.Event()
+        self.event_queue = Queue()
         self.websocket = None
 
     def register_callback(self, message_content: str, caller: object, callback_function, cooldown: int = 0):
@@ -258,7 +261,7 @@ class DiscordClient(object):
         return f"{DISCORD_API_BASE_URL}/v{self.api_version}"
 
     def api_url(self, ressource_path: str):
-        return f"{self.api_base_url()}/{ressource_path}"
+        return f"{self.api_base_url()}{ressource_path}"
 
     def gateway_base_url(self):
         result = requests.get(
@@ -266,6 +269,13 @@ class DiscordClient(object):
             headers=self.header()
         )
         return result.json()["url"] + f"?v={self.gateway_api_version}&encoding=json"
+
+    def me(self):
+        result = requests.get(
+            url=self.api_url(ressource_path=DISCORD_CURRENT_USER_PATH),
+            headers=self.header()
+        )
+        return result
 
     def connect_to_gateway(self):
 
@@ -290,10 +300,19 @@ class DiscordClient(object):
     def heartbeat(self, interval: int):
         pass
 
-    def event_loop(self):
+    def queue_events(self):
         self.connected_to_gateway_event.wait()
+        logging.info("queuing events...")
         while True:
             event = DiscordGatewayDispatch.received(self.websocket.receive())
+            self.event_queue.put(event)
+            gevent.sleep(0)
+
+    def handle_events(self):
+        self.connected_to_gateway_event.wait()
+        logging.info("...unqueuing events")
+        while True:
+            event = self.event_queue.get()
             self.handle_event(event)
             gevent.sleep(0)
 
@@ -322,7 +341,8 @@ class DiscordClient(object):
     def start(self):
         return [
             gevent.spawn(self.connect_to_gateway),
-            gevent.spawn(self.event_loop)
+            gevent.spawn(self.queue_events),
+            gevent.spawn(self.handle_events)
         ]
 
 class Message:
@@ -343,7 +363,13 @@ class Message:
     # TODO implement message response
     def respond(self, response: str):
         logging.info(f"responding {response}")
-        #gevent.spawn(self.discord_client.)
+
+        # response_message = self.original_event.copy()
+        # response_message["d"]["content"] = response
+        # response_message["d"]["author"] = {
+        #     "id"
+        # }
+        # gevent.spawn(self.discord_client.send_message, response_message)
         # self.discord_client.websocket.send()
 
 
