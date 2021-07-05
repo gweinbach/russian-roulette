@@ -5,7 +5,6 @@ from enum import Enum, IntEnum
 
 import gevent
 import requests
-from gevent.queue import Queue
 from ws4py.client.geventclient import WebSocketClient
 
 from .user import User
@@ -109,9 +108,9 @@ class DiscordGatewayOp:
     @classmethod
     def received(cls,
                  message: str):
-        payload = json.loads(message)
-        if not payload:
+        if not message:
             raise DiscordInvalidOperation()
+        payload = json.loads(message)
         return cls(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)), payload)
 
     @classmethod
@@ -237,11 +236,10 @@ class DiscordClient(object):
 
         self.message_handler_registry = {}
         self.connected_to_gateway_event = gevent.event.Event()
-        self.event_queue = gevent.queue.Queue()
         self.websocket = None
 
     def register_callback(self, message_content: str, caller: object, callback_function, cooldown: int = 0):
-        print(f"registered {caller}.{callback_function} to handle {message_content}")
+        logging.info(f"registered {caller}.{callback_function} to handle {message_content}")
         self.message_handler_registry[message_content] = DiscordCallback(caller, callback_function, cooldown)
 
     def bot_authorization_header(self):
@@ -292,30 +290,22 @@ class DiscordClient(object):
     def heartbeat(self, interval: int):
         pass
 
-    def listen_for_events(self):
+    def event_loop(self):
         self.connected_to_gateway_event.wait()
         while True:
             event = DiscordGatewayDispatch.received(self.websocket.receive())
-            self.event_queue.put(event)
-            print(f"queued: {event}")
+            self.handle_event(event)
             gevent.sleep(0)
 
-    def handle_event_queue(self):
-        self.connected_to_gateway_event.wait()
-        while True:
-            event = self.event_queue.get()
-            print(f"unqueued: {event}")
-            self.handle_event(event)
-            gevent.sleep(1)
 
     def handle_event(self, event: dict):
-        print(f"handling event: {event}")
+        logging.info(f"handling event: {event}")
 
         event_data = event.event_data()
         message_content = event_data.get("content", "")
         callback = self.message_handler_registry.get(message_content, None)
 
-        print(f"found callback: {callback}")
+        logging.info(f"found callback: {callback}")
 
         if (callback):
 
@@ -332,8 +322,7 @@ class DiscordClient(object):
     def start(self):
         return [
             gevent.spawn(self.connect_to_gateway()),
-            gevent.spawn(self.listen_for_events()),
-            gevent.spawn(self.handle_event_queue())
+            gevent.spawn(self.event_loop())
         ]
 
 class Message:
@@ -347,10 +336,11 @@ class Message:
         self.author = author
         self.content = content
         self.discord_client = discord_client
-        print(self)
+        logging.info(self)
 
+    # TODO implement message response
     def respond(self, response: str):
-        print(f"responding {response}")
+        logging.info(f"responding {response}")
         # self.discord_client.websocket.send()
 
 
@@ -362,13 +352,11 @@ class Ws4pyClient:
 
     def send(self, command: DiscordGatewayCommand):
         logging.info(f"> sending command {command}")
-        print(f"> sending command {command}")
         self.ws.send(str(command))
 
     def receive(self):
         received = str(self.ws.receive())
         logging.info(f"< received message {received}")
-        print(f"< received message {received}")
         return received
 
 #

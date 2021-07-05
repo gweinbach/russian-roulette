@@ -38,7 +38,6 @@ class Bot:
 
         [self.discord_client.register_callback(content, self, callback.callback_method, callback.cooldown) for (content, callback) in registered_commands.items()]
         bots[token] = self
-        logging.info("Created a bot:", self)
 
     def run(self):
         gevent.joinall(self.discord_client.start())
@@ -57,8 +56,8 @@ class Bot:
                 logging.info(f"Bot {bot} is receiving message {message} related to command {command_name}")
                 return function(bot, message)
 
+            registered_commands[command_name] = CommandCallback(callback_method = wrapper, cooldown = cooldown)
             return wrapper
 
-        registered_commands[command_name] = CommandCallback(callback_method = decorator, cooldown = cooldown)
         logging.info(f"Registered command: {command_name} that cools down in {cooldown}")
         return decorator
