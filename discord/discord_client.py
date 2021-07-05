@@ -1,9 +1,12 @@
+import copy
 import json
 import logging
 import sys
+from datetime import datetime
 from enum import Enum, IntEnum
 
 import gevent
+import pytz as pytz
 import requests
 from gevent.queue import Queue
 from ws4py.client.geventclient import WebSocketClient
@@ -20,6 +23,7 @@ DISCORD_GATEWAY_API_VERSION = "9"
 DISCORD_API_BASE_URL = "https://discord.com/api"
 DISCORD_GATEWAY_PATH = "/gateway/bot"
 DISCORD_CURRENT_USER_PATH = "/users/@me"
+DISCORD_CREATE_MESSAGE_PATH = "/channels/{channel_id}/messages"
 
 DISCORD_AUTHORIZATION_HEADER = "Bot {token}"
 DISCORD_USER_AGENT_HEADER = f"DiscordBot ({DISCORD_API_CLIENT_URL}, {DISCORD_API_CLIENT_VERSION})"
@@ -40,6 +44,31 @@ class DiscordInvalidOperation(DiscordError):
         self.op = op
         self.expected_op = expected_op
         super().__init__(f"Invalid operation. Expected {expected_op} but actual Operation Code is {op}")
+
+
+class DiscordMessageType(IntEnum):
+    DEFAULT = 0
+    RECIPIENT_ADD = 1
+    RECIPIENT_REMOVE = 2
+    CALL = 3
+    CHANNEL_NAME_CHANGE = 4
+    CHANNEL_ICON_CHANGE = 5
+    CHANNEL_PINNED_MESSAGE = 6
+    GUILD_MEMBER_JOIN = 7
+    USER_PREMIUM_GUILD_SUBSCRIPTION = 8
+    USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_1 = 9
+    USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_2 = 10
+    USER_PREMIUM_GUILD_SUBSCRIPTION_TIER_3 = 11
+    CHANNEL_FOLLOW_ADD = 12
+    GUILD_DISCOVERY_DISQUALIFIED = 14
+    GUILD_DISCOVERY_REQUALIFIED = 15
+    GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING = 16
+    GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING = 17
+    THREAD_CREATED = 18
+    REPLY = 19
+    APPLICATION_COMMAND = 20
+    THREAD_STARTER_MESSAGE = 21
+    GUILD_INVITE_REMINDER = 22
 
 
 class DiscordGatewayOpCode(IntEnum):
@@ -121,7 +150,7 @@ class DiscordGatewayOp:
                content: dict):
         return cls(
             op_code,
-            dict(content.copy(), op=op_code.value)
+            dict(copy.deepcopy(content), op=op_code.value)
         )
 
     def json(self):
@@ -142,7 +171,7 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
         return super().create(
             DiscordGatewayOpCode.DISPATCH,
             {
-                "d": event
+                "d": copy.deepcopy(event)
             }
         )
 
@@ -217,13 +246,13 @@ class DiscordGatewayIntent(IntEnum):
 
 
 class DiscordCallback():
-     def __init__(self,
-                  caller: object,
-                  callback_function,
-                  cooldown: int = 0):
-         self.caller = caller
-         self.callback_function = callback_function
-         self.cooldown = cooldown
+    def __init__(self,
+                 caller: object,
+                 callback_function,
+                 cooldown: int = 0):
+        self.caller = caller
+        self.callback_function = callback_function
+        self.cooldown = cooldown
 
 
 class DiscordClient(object):
@@ -254,7 +283,8 @@ class DiscordClient(object):
     def header(self):
         return {
             'user-agent': self.user_agent_header(),
-            'authorization': self.bot_authorization_header()
+            'authorization': self.bot_authorization_header(),
+            'content-type': 'application/json'
         }
 
     def api_base_url(self):
@@ -275,7 +305,7 @@ class DiscordClient(object):
             url=self.api_url(ressource_path=DISCORD_CURRENT_USER_PATH),
             headers=self.header()
         )
-        return result
+        return result.json()
 
     def connect_to_gateway(self):
 
@@ -316,7 +346,6 @@ class DiscordClient(object):
             self.handle_event(event)
             gevent.sleep(0)
 
-
     def handle_event(self, event: dict):
         logging.info(f"handling event: {event}")
 
@@ -327,7 +356,6 @@ class DiscordClient(object):
         logging.info(f"found callback: {callback}")
 
         if (callback):
-
             message_id = event_data.get("id", "")
             user = event_data.get("author", {})
             user_id = user.get("id", "")
@@ -336,14 +364,40 @@ class DiscordClient(object):
             message = Message(message_id, User(user_id, user_name), message_content, event, self)
             gevent.spawn(callback.callback_function, callback.caller, message)
 
-
-
     def start(self):
         return [
             gevent.spawn(self.connect_to_gateway),
             gevent.spawn(self.queue_events),
             gevent.spawn(self.handle_events)
         ]
+
+    def respond_with(self, response: str, request: DiscordGatewayDispatch):
+
+        def respond(message: dict):
+            channel_id = message.get("channel_id", "0")
+            user = self.me()
+            message["author"] = user
+
+            logging.debug(f"respond message=${message}")
+            result = requests.post(
+                url=self.api_url(ressource_path=DISCORD_CREATE_MESSAGE_PATH.format(channel_id=channel_id)),
+                headers=self.header(),
+                json=message
+            )
+            logging.debug(f"respond result={result}, reason={result.reason}, content={result.text}")
+
+        request_message = request.event_data()
+        response_message = copy.deepcopy(request_message)
+        response_message["id"] = None
+        response_message["timestamp"] = datetime.now().astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00)")
+        response_message["content"] = response
+        response_message["referenced_message"] = request_message
+        response_message["message_reference"] = {
+            "message_id": request_message["id"]
+        }
+        response_message["type"] = DiscordMessageType.REPLY.value
+
+        gevent.spawn(respond, response_message)
 
 class Message:
 
@@ -363,14 +417,8 @@ class Message:
     # TODO implement message response
     def respond(self, response: str):
         logging.info(f"responding {response}")
-
-        # response_message = self.original_event.copy()
-        # response_message["d"]["content"] = response
-        # response_message["d"]["author"] = {
-        #     "id"
-        # }
-        # gevent.spawn(self.discord_client.send_message, response_message)
-        # self.discord_client.websocket.send()
+        print(type(self.original_event))
+        self.discord_client.respond_with(response, request=self.original_event)
 
 
 class Ws4pyClient:
