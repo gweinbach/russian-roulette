@@ -434,21 +434,9 @@ class DiscordCallback(object):
         return f"{self.caller.__class__.__name__}.{self.callback_function.__name__}"
 
 
-class DiscordClient():
-
-    def __init__(self,
-                 token: str,
-                 api_version=DISCORD_API_VERSION,
-                 gateway_api_version=DISCORD_GATEWAY_API_VERSION):
-        self.token = token
-        self.api_version = api_version
-        self.gateway_api_version = gateway_api_version
-
+class DiscordCallbackHolder():
+    def __init__(self):
         self.callback_registry = {}
-        self.connected_to_gateway_event = Event()
-        self.heartbeat_event = Event()
-        self.event_queue = Queue()
-        self.websocket = None
 
     def register_callback(self,
                           message_content: str,
@@ -461,6 +449,25 @@ class DiscordClient():
     def matching_callback(self,
                           message_content: str) -> Optional[DiscordCallback]:
         return self.callback_registry.get(message_content, None)
+
+
+class DiscordClient(DiscordCallbackHolder):
+
+    def __init__(self,
+                 token: str,
+                 api_version=DISCORD_API_VERSION,
+                 gateway_api_version=DISCORD_GATEWAY_API_VERSION):
+        
+        self.token = token
+        self.api_version = api_version
+        self.gateway_api_version = gateway_api_version
+
+        self.connected_to_gateway_event = Event()
+        self.heartbeat_event = Event()
+        self.event_queue = Queue()
+        self.websocket = None
+        
+        super().__init__()
 
     @property
     def bot_authorization_header(self) -> str:
