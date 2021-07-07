@@ -1,4 +1,7 @@
+import os
+
 from gevent import monkey
+
 monkey.patch_all()
 
 import logging
@@ -6,14 +9,15 @@ from gevent import sleep
 from random import randint
 from discord import Bot, Message, User
 
-
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(name)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
 ONE_HOUR = 60 * 60
 BULLETS_COUNT = 6
 WIN_POINTS_REWARD = 1
 DEATH_POINTS_PENALTY = 3
 PLAYER_POINTS_FORMAT = "roulette.{user_id}"
+BOT_TOKEN_ENVIRONMENT_VARIABLE_NAME = "DISCORD_ROULETTE_BOT_TOKEN"
 
 
 class RouletteBot(Bot):
@@ -40,7 +44,11 @@ class RouletteBot(Bot):
 
 if __name__ == "__main__":
 
-    # Should be read from environment or better, a Vault
+    bot_token = os.environ.get(BOT_TOKEN_ENVIRONMENT_VARIABLE_NAME)
+    if not bot_token:
+        logger.error(f"Token is not defined. Please set '{BOT_TOKEN_ENVIRONMENT_VARIABLE_NAME}' environment variable")
+        exit(1)
+
     BOT_TOKEN = "ODYwMTk2NDMzMzY1NTY1NTAw.YN3uWw.DcaWW6jKiffaIVpi9uS3rZZ7QCM"
-    bot = RouletteBot(BOT_TOKEN)
+    bot = RouletteBot(bot_token)
     RouletteBot.run_forever()
