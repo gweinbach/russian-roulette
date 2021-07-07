@@ -183,18 +183,33 @@ class DiscordGatewayOp():
         logger.info(f"Nothing has to be done to handle event on Gateway operation {self.__class__.__name__}")
         return None
 
+    # This method has no return type annotation because prior to 3.10,
+    # you cannot use given class type as return class type in a class method
     @classmethod
     def expect(cls,
                message: str):
+        """
+        Tries and instantiate a subclass of DiscordGatewayOp according to the given cls parameter.
+        Raises an Exception if op code in the message does not match the given subclass parameter.
+        :param message:
+        :return:
+        """
         if not message:
             raise DiscordEmptyGatewayOperation()
         payload = json.loads(message)
         DiscordGatewayOp._last_message_seq = payload.get("s", None)
 
-        return cls(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)), payload)
+        return cls(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)),
+                   copy.deepcopy(payload))
 
     @staticmethod
     def receive(message: str) -> DiscordGatewayOp:
+        """
+        Tries and instantiate the right subclass of DiscordGatewayOp according to the op code in the message.
+        Raises an Exception if code is missing or does not correspond to a known subclass.
+        :param message:
+        :return:
+        """
         if not message:
             raise DiscordEmptyGatewayOperation()
         payload = json.loads(message)
@@ -205,14 +220,22 @@ class DiscordGatewayOp():
         if op_class is None:
             raise DiscordUnknownGatewayOperation(op_code)
 
-        return op_class(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)), payload)
+        return op_class(DiscordGatewayOpCode(payload.get("op", DiscordGatewayOpCode.NO_OP.value)),
+                        copy.deepcopy(payload))
 
     # This method has no return type annotation because prior to 3.10,
     # you cannot use given class type as return class type in a class method
     @classmethod
-    def _create(cls,
+    def _build(cls,
                 op_code: DiscordGatewayOpCode,
                 content: dict):
+        """
+        Builds a new DiscordGatewayOp with a forged content.
+        This is meant to be used to build Ops that will be sent to the Gateway.
+        :param op_code:
+        :param content:
+        :return:
+        """
         return cls(
             op_code,
             dict(copy.deepcopy(content), op=op_code.value)
@@ -243,9 +266,9 @@ class DiscordGatewayOp():
 class DiscordGatewayDispatch(DiscordGatewayOp):
 
     @classmethod
-    def create(cls,
+    def build(cls,
                event: dict) -> DiscordGatewayDispatch:
-        return cls._create(
+        return cls._build(
             DiscordGatewayOpCode.DISPATCH,
             {
                 "d": copy.deepcopy(event)
@@ -283,9 +306,9 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
 class DiscordGatewayHeartbeatAck(DiscordGatewayOp):
 
     @classmethod
-    def create(cls,
+    def build(cls,
                event: dict) -> DiscordGatewayHeartbeatAck:
-        return cls._create(
+        return cls._build(
             DiscordGatewayOpCode.HEARTBEAT_ACK,
             {}
         )
@@ -313,9 +336,9 @@ class DiscordGatewayHello(DiscordGatewayCommand):
             return 0
 
     @classmethod
-    def create(cls,
+    def build(cls,
                token: str) -> DiscordGatewayHello:
-        return cls._create(
+        return cls._build(
             DiscordGatewayOpCode.HELLO,
             {
                 "d": {
@@ -334,8 +357,8 @@ class DiscordGatewayHeartbeat(DiscordGatewayCommand):
             return None
 
     @classmethod
-    def create(cls) -> DiscordGatewayHeartbeat:
-        return cls._create(
+    def build(cls) -> DiscordGatewayHeartbeat:
+        return cls._build(
             DiscordGatewayOpCode.HEARTBEAT,
             {
                 "d": DiscordGatewayOp.last_message_seq()
@@ -346,10 +369,10 @@ class DiscordGatewayHeartbeat(DiscordGatewayCommand):
 class DiscordGatewayIdentify(DiscordGatewayCommand):
 
     @classmethod
-    def create(cls,
+    def build(cls,
                token: str,
                intents: int) -> DiscordGatewayIdentify:
-        return cls._create(
+        return cls._build(
             DiscordGatewayOpCode.IDENTIFY,
             {
                 "d": {
@@ -473,7 +496,7 @@ class DiscordClient(CallbackHolder):
         heartbeat = gevent.spawn(self.heartbeat, interval=heartbeat_interval)
         self.heartbeat_on()
 
-        identify = DiscordGatewayIdentify.create(self.token,
+        identify = DiscordGatewayIdentify.build(self.token,
                                                  DiscordGatewayIntent.GuildMessages | DiscordGatewayIntent.GuildMessageReactions | DiscordGatewayIntent.DirectMessages | DiscordGatewayIntent.DirectMessageReactions)
         self.websocket.send(identify)
 
@@ -496,7 +519,7 @@ class DiscordClient(CallbackHolder):
             self.heartbeat_event.wait()
             gevent.sleep((interval * random()) / 1000)
             logger.info("heartbeat!")
-            heartbeat = DiscordGatewayHeartbeat.create()
+            heartbeat = DiscordGatewayHeartbeat.build()
             self.websocket.send(heartbeat)
             self.heartbeat_off()
 

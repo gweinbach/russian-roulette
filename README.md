@@ -1,4 +1,4 @@
-![example workflow](https://github.com/gweinbach/russian-roulette/actions/workflows/<WORKFLOW_FILE>/badge.svg)
+![Russian Roulette](https://github.com/gweinbach/russian-roulette/actions/workflows/main.yml/badge.svg)
 
 # MEE6 Backend Test
 
