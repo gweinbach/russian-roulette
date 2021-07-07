@@ -28,9 +28,9 @@ registered_commands = {}
 
 
 class CommandCallback:
-    def __init__(self, callback_method, cooldown: int):
+    def __init__(self, callback_method, cooldown_in_s: int):
         self.callback_method = callback_method
-        self.cooldown = cooldown
+        self.cooldown_in_s = cooldown_in_s
 
 
 class Bot:
@@ -39,7 +39,7 @@ class Bot:
         self.kv = IntDictionary()
         self.discord_client = DiscordClient(token=token)
 
-        [self.discord_client.register_callback(content, self, callback.callback_method, callback.cooldown) for
+        [self.discord_client.register_callback(content, self, callback.callback_method, callback.cooldown_in_s) for
          (content, callback) in registered_commands.items()]
         bots[token] = self
 
@@ -60,7 +60,7 @@ class Bot:
                 logger.info(f"Bot {bot} is receiving message {message} related to command {command_name}")
                 return function(bot, message)
 
-            registered_commands[command_name] = CommandCallback(callback_method=wrapper, cooldown=cooldown)
+            registered_commands[command_name] = CommandCallback(callback_method=wrapper, cooldown_in_s=cooldown)
             return wrapper
 
         logger.info(f"Registered command: {command_name} that cools down in {cooldown}")
