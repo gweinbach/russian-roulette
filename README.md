@@ -1,3 +1,5 @@
+![example workflow](https://github.com/gweinbach/russian-roulette/actions/workflows/<WORKFLOW_FILE>/badge.svg)
+
 # MEE6 Backend Test
 
 ## Deliverable
