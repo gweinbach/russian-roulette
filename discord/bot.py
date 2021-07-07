@@ -3,23 +3,9 @@ import logging
 import gevent
 
 from .discord_client import DiscordClient, Message
+from .key_value import FileStorageKeyIntValue
 
 logger = logging.getLogger(__name__)
-
-
-class IntDictionary:
-
-    def __init__(self):
-        self.dict = {}
-
-    def increment_int(self, key, int_value: int):
-        self.dict[key] = self.dict.get(key, 0) + int_value
-
-    def decrement_int(self, key, int_value: int):
-        self.dict[key] = self.dict.get(key, 0) - int_value
-
-    def get_int(self, key, default: int = 0):
-        return self.dict.get(key, default)
 
 
 bots = {}
@@ -36,7 +22,7 @@ class CommandCallback:
 class Bot:
     def __init__(self, token: str):
         self.token = token
-        self.kv = IntDictionary()
+        self.kv = FileStorageKeyIntValue()
         self.discord_client = DiscordClient(token=token)
 
         [self.discord_client.register_callback(content, self, callback.callback_method, callback.cooldown_in_s) for

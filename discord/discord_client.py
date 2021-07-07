@@ -279,13 +279,13 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
                      discord_client: DiscordClient) -> Optional[Greenlet]:
         user = self._build_user_from_event_author()
 
-        if user:
+        if user is not None:
             event_data = self.event_data()
             message_content = event_data.get("content", "")
 
             callback = discord_client.matching_callback(message_content)
 
-            if callback:
+            if callback is not None:
                 logger.info(f"found callback matching message content ({message_content}): {callback}")
 
                 message_id = event_data.get("id", "")
@@ -295,9 +295,9 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
 
     def _build_user_from_event_author(self) -> Optional[User]:
         user = self.event_data().get("author", {})
-        user_id = user.get("id", "")
-        user_name = user.get("username", "")
-        if user_id:
+        user_id = user.get("id")
+        user_name = user.get("username")
+        if user_id is not None:
             return User(user_id, user_name)
         else:
             return None

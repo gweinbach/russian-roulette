@@ -1,6 +1,6 @@
-import gevent
 from gevent import monkey
 monkey.patch_all()
+import gevent
 import unittest
 
 from discord.callback_holder import Callback, CallbackHolder
