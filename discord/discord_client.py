@@ -4,7 +4,7 @@ import copy
 import json
 import logging
 import sys
-from collections import Sequence
+from collections.abc import Sequence
 from datetime import datetime
 from enum import Enum, IntEnum
 from random import random
@@ -18,7 +18,7 @@ from gevent.queue import Queue
 from pytz import utc
 from ws4py.client.geventclient import WebSocketClient
 
-from .discord_callback_holder import DiscordCallbackHolder
+from .callback_holder import CallbackHolder
 from .user import User
 
 logger = logging.getLogger(__name__)
@@ -268,7 +268,7 @@ class DiscordGatewayDispatch(DiscordGatewayOp):
                 message_id = event_data.get("id", "")
                 message = Message(message_id, user, message_content, self, discord_client)
 
-                return callback.fire(message)
+                return callback.fire(message, user_id=user.id)
 
     def _build_user_from_event_author(self) -> Optional[User]:
         user = self.event_data().get("author", {})
@@ -403,14 +403,13 @@ class Message:
         return self.discord_client.respond_with(response, request=self.original_event)
 
 
-
-class DiscordClient(DiscordCallbackHolder):
+class DiscordClient(CallbackHolder):
 
     def __init__(self,
                  token: str,
                  api_version=DISCORD_API_VERSION,
                  gateway_api_version=DISCORD_GATEWAY_API_VERSION):
-        
+
         self.token = token
         self.api_version = api_version
         self.gateway_api_version = gateway_api_version
@@ -419,7 +418,7 @@ class DiscordClient(DiscordCallbackHolder):
         self.heartbeat_event = Event()
         self.event_queue = Queue()
         self.websocket = None
-        
+
         super().__init__()
 
     @property

@@ -7,6 +7,7 @@ monkey.patch_all()
 import logging
 from gevent import sleep
 from random import randint
+from dotenv import load_dotenv
 from discord import Bot, Message, User
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(name)s %(levelname)s %(message)s')
@@ -43,6 +44,8 @@ class RouletteBot(Bot):
 
 
 if __name__ == "__main__":
+
+    load_dotenv()
 
     bot_token = os.environ.get(BOT_TOKEN_ENVIRONMENT_VARIABLE_NAME)
     if not bot_token:
