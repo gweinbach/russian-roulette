@@ -52,6 +52,5 @@ if __name__ == "__main__":
         logger.error(f"Token is not defined. Please set '{BOT_TOKEN_ENVIRONMENT_VARIABLE_NAME}' environment variable")
         exit(1)
 
-    BOT_TOKEN = "ODYwMTk2NDMzMzY1NTY1NTAw.YN3uWw.DcaWW6jKiffaIVpi9uS3rZZ7QCM"
     bot = RouletteBot(bot_token)
     RouletteBot.run_forever()
